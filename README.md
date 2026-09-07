@@ -58,6 +58,25 @@ O Dockerfile instala o `ffmpeg` na imagem:
 ```bash
 docker build -t video-processor-worker .
 docker run --name video-worker video-processor-worker
+````
+### Rodando Serviços na mesma máquina:
+```bash
+docker run --name video-worker \
+	--network video-processor-api_default \
+	--mount source=video-processor-api_api-data,target=/data \
+	-e WORKER_STORAGE_DIR=/data/uploads \
+	-e WORKER_OUTPUT_DIR=/data/outputs \
+	-e POSTGRES_HOST=postgres \
+	-e POSTGRES_PORT=5432 \
+	-e POSTGRES_USER=video_processor \
+	-e POSTGRES_PASSWORD=video_processor \
+	-e POSTGRES_DB=video_processor \
+	-e RABBITMQ_HOST=rabbitmq \
+	-e RABBITMQ_PORT=5672 \
+	-e RABBITMQ_USER=guest \
+	-e RABBITMQ_PASSWORD=guest \
+	-e MONGO_URI=mongodb://mongo:27017 \
+	video-processor-worker
 ```
 
 Em um ambiente com containers, use a mesma rede da API, RabbitMQ e PostgreSQL. O diretorio de entrada e saida precisa ser compartilhado com a API, por volume Docker ou storage de objetos.
