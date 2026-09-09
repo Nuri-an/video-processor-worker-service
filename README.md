@@ -9,7 +9,8 @@ Worker responsavel pelo processamento assincrono de videos. Ele nao expoe uma AP
 3. Executar o `ffmpeg` com um frame por segundo.
 4. Compactar os frames em um arquivo ZIP.
 5. Atualizar o job no PostgreSQL para `Concluido` ou `Erro`.
-6. Registrar eventos de processamento no sistema de logs.
+6. Enviar um e-mail ao usuario quando o processamento falhar.
+7. Registrar eventos de processamento no sistema de logs.
 
 ## Dependencias
 
@@ -39,6 +40,16 @@ Worker responsavel pelo processamento assincrono de videos. Ele nao expoe uma AP
 | `MONGO_URI` | `mongodb://localhost:27017` | Conexao dos logs |
 | `MONGO_DATABASE` | `video_processor_logs` | Banco dos logs |
 | `MONGO_COLLECTION` | `application_logs` | Collection dos logs |
+| `SMTP_HOST` | `localhost` | Host do servidor SMTP |
+| `SMTP_PORT` | `25` | Porta do servidor SMTP |
+| `SMTP_USERNAME` | vazio | Usuario SMTP |
+| `SMTP_PASSWORD` | vazio | Senha SMTP |
+| `SMTP_FROM` | `noreply@video-processor.local` | Remetente das notificacoes |
+| `SMTP_TO` | vazio | Destinatario fallback quando o job nao tiver e-mail |
+
+Com Mailpit, use `SMTP_HOST=mailpit`, `SMTP_PORT=1025`, `SMTP_FROM=noreply@example.com`
+e deixe `SMTP_USERNAME` e `SMTP_PASSWORD` vazios. O e-mail recebido pode ser consultado
+em `http://localhost:8025`.
 
 ## Execucao local
 
