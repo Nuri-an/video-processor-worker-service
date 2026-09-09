@@ -9,15 +9,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
-
 )
 
 type VideoJob struct {
 	ID        string    `json:"id"`
 	User      string    `json:"user"`
+	Email     string    `json:"email,omitempty"`
 	ObjectKey string    `json:"object_key"`
 	Status    string    `json:"status"`
+	Error     string    `json:"error,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -34,6 +36,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	notifier := smtpNotifierConfig()
 	queue, err := NewRabbitConsumer(rabbitConfig())
 	if err != nil {
 		log.Fatal(err)
@@ -54,18 +57,22 @@ func main() {
 			continue
 		}
 
-		if err := processJob(job, envOr("WORKER_STORAGE_DIR", "uploads"), envOr("WORKER_OUTPUT_DIR", "outputs")); err != nil {
+		if err := processJobSafely(job, envOr("WORKER_STORAGE_DIR", "uploads"), envOr("WORKER_OUTPUT_DIR", "outputs")); err != nil {
 			job.Status = "Erro"
+			job.Error = err.Error()
 			logger.Log("job_failed", job.ID, err.Error())
-			if updateErr := repository.UpdateStatus(job.ID, job.Status); updateErr != nil {
+			if updateErr := repository.UpdateStatus(job.ID, job.Status, job.Error); updateErr != nil {
 				logger.Log("job_database_error", job.ID, updateErr.Error())
+			}
+			if notifyErr := notifier.NotifyProcessingError(notificationRecipient(job), job, err); notifyErr != nil {
+				logger.Log("job_notification_error", job.ID, notifyErr.Error())
 			}
 			message.Ack(false)
 			continue
 		}
 
 		job.Status = "Concluido"
-		if err := repository.UpdateStatus(job.ID, job.Status); err != nil {
+		if err := repository.UpdateStatus(job.ID, job.Status, ""); err != nil {
 			logger.Log("job_database_error", job.ID, err.Error())
 			message.Nack(false, true)
 			continue
@@ -73,6 +80,25 @@ func main() {
 		logger.Log("job_completed", job.ID, "video processing completed")
 		message.Ack(false)
 	}
+}
+
+func processJobSafely(job VideoJob, storageDir, outputDir string) (processingError error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			processingError = fmt.Errorf("processamento interrompido: %v", recovered)
+		}
+	}()
+	return processJob(job, storageDir, outputDir)
+}
+
+func notificationRecipient(job VideoJob) string {
+	if strings.TrimSpace(job.Email) != "" {
+		return strings.TrimSpace(job.Email)
+	}
+	if strings.Contains(job.User, "@") {
+		return strings.TrimSpace(job.User)
+	}
+	return strings.TrimSpace(envOr("SMTP_TO", ""))
 }
 
 func processJob(job VideoJob, storageDir, outputDir string) error {
