@@ -44,7 +44,7 @@ func (q *RabbitConsumer) Close() {
 
 func rabbitConfig() RabbitConfig {
 	return RabbitConfig{
-		URL: fmt.Sprintf("amqp://%s:%s@%s:%s/", envOr("RABBITMQ_USER", "video_processor"), envOr("RABBITMQ_PASSWORD", "video_processor"), envOr("RABBITMQ_HOST", "localhost"), envOr("RABBITMQ_PORT", "5672")),
+		URL: fmt.Sprintf("amqp://%s:%s@%s:%s/", envOr("RABBITMQ_USER", ""), envOr("RABBITMQ_PASSWORD", ""), envOr("RABBITMQ_HOST", "localhost"), envOr("RABBITMQ_PORT", "5672")),
 		Queue: envOr("RABBITMQ_QUEUE", "video_jobs"),
 	}
 }

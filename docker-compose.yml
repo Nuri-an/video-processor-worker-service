@@ -1,0 +1,35 @@
+services:
+  worker:
+    build: .
+    environment:
+      WORKER_STORAGE_DIR: /data/uploads
+      WORKER_OUTPUT_DIR: /data/outputs
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: video_processor
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+      POSTGRES_DB: video_processor
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: "${RABBITMQ_USER:?RABBITMQ_USER is required}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}"
+      RABBITMQ_QUEUE: video_jobs
+      MONGO_URI: mongodb://mongo:27017
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_FROM: noreply@example.com
+    volumes:
+      - api-data:/data
+    networks:
+      - video-processor
+    restart: unless-stopped
+
+volumes:
+  api-data:
+    external: true
+    name: video-processor-data
+
+networks:
+  video-processor:
+    external: true
+    name: video-processor
