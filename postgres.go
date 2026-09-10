@@ -56,7 +56,7 @@ func postgresConfig() PostgresConfig {
 		envOr("POSTGRES_HOST", "localhost"),
 		envOr("POSTGRES_PORT", "5432"),
 		envOr("POSTGRES_USER", "video_processor"),
-		envOr("POSTGRES_PASSWORD", "video_processor"),
+		envOr("POSTGRES_PASSWORD", ""),
 		envOr("POSTGRES_DB", "video_processor"),
 	))}
 }

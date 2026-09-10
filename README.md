@@ -30,12 +30,12 @@ Worker responsavel pelo processamento assincrono de videos. Ele nao expoe uma AP
 | `POSTGRES_HOST` | `localhost` | Host do PostgreSQL |
 | `POSTGRES_PORT` | `5432` | Porta do PostgreSQL |
 | `POSTGRES_USER` | `video_processor` | Usuario do PostgreSQL |
-| `POSTGRES_PASSWORD` | `video_processor` | Senha do PostgreSQL |
+| `POSTGRES_PASSWORD` | vazio | Senha do PostgreSQL |
 | `POSTGRES_DB` | `video_processor` | Banco do PostgreSQL |
 | `RABBITMQ_HOST` | `localhost` | Host do RabbitMQ |
 | `RABBITMQ_PORT` | `5672` | Porta do RabbitMQ |
-| `RABBITMQ_USER` | `video_processor` | Usuario do RabbitMQ |
-| `RABBITMQ_PASSWORD` | `video_processor` | Senha do RabbitMQ |
+| `RABBITMQ_USER` | vazio | Usuario do RabbitMQ |
+| `RABBITMQ_PASSWORD` | vazio | Senha do RabbitMQ |
 | `RABBITMQ_QUEUE` | `video_jobs` | Fila consumida pelo Worker |
 | `MONGO_URI` | `mongodb://localhost:27017` | Conexao dos logs |
 | `MONGO_DATABASE` | `video_processor_logs` | Banco dos logs |
@@ -70,22 +70,39 @@ O Dockerfile instala o `ffmpeg` na imagem:
 docker build -t video-processor-worker .
 docker run --name video-worker video-processor-worker
 ````
-### Rodando Serviços na mesma máquina:
+### Rodando com o Compose da API:
+
+Primeiro, suba a API e as dependencias no repositorio `video-processor-api`:
+
+```bash
+docker compose up -d --build
+```
+
+Depois, neste repositorio, suba somente o worker:
+
+```bash
+docker compose up -d --build
+```
+
+O Compose da API cria a rede externa `video-processor` e o volume externo
+`video-processor-data`. O Compose do Worker apenas se conecta a esses recursos;
+os repositorios continuam independentes.
+
+### Rodando o container manualmente:
+
 ```bash
 docker run --name video-worker \
-	--network video-processor-api_default \
-	--mount source=video-processor-api_api-data,target=/data \
+	--env-file .env \
+	--network video-processor \
+	--mount source=video-processor-data,target=/data \
 	-e WORKER_STORAGE_DIR=/data/uploads \
 	-e WORKER_OUTPUT_DIR=/data/outputs \
 	-e POSTGRES_HOST=postgres \
 	-e POSTGRES_PORT=5432 \
 	-e POSTGRES_USER=video_processor \
-	-e POSTGRES_PASSWORD=video_processor \
 	-e POSTGRES_DB=video_processor \
 	-e RABBITMQ_HOST=rabbitmq \
 	-e RABBITMQ_PORT=5672 \
-	-e RABBITMQ_USER=guest \
-	-e RABBITMQ_PASSWORD=guest \
 	-e MONGO_URI=mongodb://mongo:27017 \
 	video-processor-worker
 ```
