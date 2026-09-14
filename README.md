@@ -37,6 +37,15 @@ Worker responsavel pelo processamento assincrono de videos. Ele nao expoe uma AP
 | `RABBITMQ_USER` | vazio | Usuario do RabbitMQ |
 | `RABBITMQ_PASSWORD` | vazio | Senha do RabbitMQ |
 | `RABBITMQ_QUEUE` | `video_jobs` | Fila consumida pelo Worker |
+| `RABBITMQ_DLX` | `video_jobs.dlx` | Exchange de dead-letter |
+| `RABBITMQ_CONFIRM_TIMEOUT` | `5s` | Timeout de publisher confirms |
+| `WORKER_CONCURRENCY` | `2` | Numero maximo de videos processados simultaneamente |
+| `WORKER_CPU_LIMIT` | numero de CPUs | Limite de CPUs logico do worker |
+| `WORKER_MAX_MEMORY_MB` | `0` | Limite de memoria do runtime; `0` desativa |
+| `WORKER_MEMORY_PER_JOB_MB` | `512` | Memoria estimada por processamento para limitar concorrencia |
+| `WORKER_PREFETCH` | valor de `WORKER_CONCURRENCY` | Mensagens pre-buscadas pelo RabbitMQ |
+| `WORKER_MAX_ATTEMPTS` | `3` | Tentativas totais antes da DLQ |
+| `WORKER_RETRY_BASE_DELAY` | `5s` | Backoff inicial; dobra a cada tentativa |
 | `MONGO_URI` | `mongodb://localhost:27017` | Conexao dos logs |
 | `MONGO_DATABASE` | `video_processor_logs` | Banco dos logs |
 | `MONGO_COLLECTION` | `application_logs` | Collection dos logs |
@@ -61,6 +70,10 @@ go run .
 ```
 
 Ele ficara aguardando mensagens no RabbitMQ na fila `video_jobs`.
+
+Falhas de processamento sao reenfileiradas em filas TTL com backoff exponencial.
+Depois do limite de tentativas, a mensagem vai para `video_jobs.dead`, o job recebe
+status `Erro` e o usuario e notificado por e-mail.
 
 ## Docker
 
@@ -108,6 +121,12 @@ docker run --name video-worker \
 ```
 
 Em um ambiente com containers, use a mesma rede da API, RabbitMQ e PostgreSQL. O diretorio de entrada e saida precisa ser compartilhado com a API, por volume Docker ou storage de objetos.
+
+## Kubernetes
+
+Os manifests e as instrucoes de deploy do worker estao em
+[k8s/README.md](k8s/README.md). O worker usa a imagem publicada
+`nuriancoelho/video-processor-worker:latest`.
 
 ## CI/CD
 

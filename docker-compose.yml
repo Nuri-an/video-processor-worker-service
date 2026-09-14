@@ -1,6 +1,8 @@
 services:
   worker:
     build: .
+    cpus: "2.0"
+    mem_limit: 1g
     environment:
       WORKER_STORAGE_DIR: /data/uploads
       WORKER_OUTPUT_DIR: /data/outputs
@@ -14,6 +16,15 @@ services:
       RABBITMQ_USER: "${RABBITMQ_USER:?RABBITMQ_USER is required}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}"
       RABBITMQ_QUEUE: video_jobs
+      RABBITMQ_DLX: video_jobs.dlx
+      RABBITMQ_CONFIRM_TIMEOUT: 5s
+      WORKER_CONCURRENCY: "2"
+      WORKER_CPU_LIMIT: "2"
+      WORKER_MAX_MEMORY_MB: "1024"
+      WORKER_MEMORY_PER_JOB_MB: "512"
+      WORKER_PREFETCH: "2"
+      WORKER_MAX_ATTEMPTS: "3"
+      WORKER_RETRY_BASE_DELAY: 5s
       MONGO_URI: mongodb://mongo:27017
       SMTP_HOST: mailpit
       SMTP_PORT: 1025
