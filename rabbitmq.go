@@ -144,7 +144,7 @@ func rabbitConfig() RabbitConfig {
 		maxAttempts = 10
 	}
 	return RabbitConfig{
-		URL:            fmt.Sprintf("amqp://%s:%s@%s:%s/", envOr("RABBITMQ_USER", ""), envOr("RABBITMQ_PASSWORD", ""), envOr("RABBITMQ_HOST", "localhost"), envOr("RABBITMQ_PORT", "5672")),
+		URL:            fmt.Sprintf("amqps://%s:%s@%s:%s/", envOr("RABBITMQ_USER", ""), envOr("RABBITMQ_PASSWORD", ""), envOr("RABBITMQ_HOST", "localhost"), envOr("RABBITMQ_PORT", "5671")),
 		Queue:          envOr("RABBITMQ_QUEUE", "video_jobs"),
 		DLX:            envOr("RABBITMQ_DLX", "video_jobs.dlx"),
 		Prefetch:       envInt("WORKER_PREFETCH", envInt("WORKER_CONCURRENCY", 2)),
