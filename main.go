@@ -9,8 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/rabbitmq/amqp091-go"
 )
 
 type VideoJob struct {
@@ -37,6 +42,7 @@ func main() {
 		log.Fatal(err)
 	}
 	notifier := smtpNotifierConfig()
+	concurrency := workerConcurrency()
 	queue, err := NewRabbitConsumer(rabbitConfig())
 	if err != nil {
 		log.Fatal(err)
@@ -48,38 +54,127 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Println("Worker iniciado; aguardando tarefas no RabbitMQ")
+	log.Printf("Worker iniciado; aguardando tarefas no RabbitMQ (concorrencia=%d)", concurrency)
+	semaphore := make(chan struct{}, concurrency)
+	var workers sync.WaitGroup
 	for message := range messages {
-		var job VideoJob
-		if err := json.Unmarshal(message.Body, &job); err != nil {
-			logger.Log("job_invalid", "", err.Error())
-			message.Nack(false, false)
-			continue
-		}
-
-		if err := processJobSafely(job, envOr("WORKER_STORAGE_DIR", "uploads"), envOr("WORKER_OUTPUT_DIR", "outputs")); err != nil {
-			job.Status = "Erro"
-			job.Error = err.Error()
-			logger.Log("job_failed", job.ID, err.Error())
-			if updateErr := repository.UpdateStatus(job.ID, job.Status, job.Error); updateErr != nil {
-				logger.Log("job_database_error", job.ID, updateErr.Error())
-			}
-			if notifyErr := notifier.NotifyProcessingError(notificationRecipient(job), job, err); notifyErr != nil {
-				logger.Log("job_notification_error", job.ID, notifyErr.Error())
-			}
-			message.Ack(false)
-			continue
-		}
-
-		job.Status = "Concluido"
-		if err := repository.UpdateStatus(job.ID, job.Status, ""); err != nil {
-			logger.Log("job_database_error", job.ID, err.Error())
-			message.Nack(false, true)
-			continue
-		}
-		logger.Log("job_completed", job.ID, "video processing completed")
-		message.Ack(false)
+		semaphore <- struct{}{}
+		workers.Add(1)
+		go func(message amqp091.Delivery) {
+			defer workers.Done()
+			defer func() { <-semaphore }()
+			handleMessage(message, repository, logger, notifier, queue)
+		}(message)
 	}
+	workers.Wait()
+}
+
+type jobStatusRepository interface {
+	UpdateStatus(id, status, errorMessage string) error
+}
+
+type rabbitMessageQueue interface {
+	PublishRetry(amqp091.Delivery, int) error
+	PublishDeadLetter(amqp091.Delivery) error
+}
+
+type processingNotifier interface {
+	NotifyProcessingError(string, VideoJob, error) error
+}
+
+var processJobFunc = processJob
+
+func handleMessage(message amqp091.Delivery, repository jobStatusRepository, logger Logger, notifier processingNotifier, queue rabbitMessageQueue) {
+	var job VideoJob
+	if err := json.Unmarshal(message.Body, &job); err != nil {
+		logger.Log("job_invalid", "", err.Error())
+		if err := queue.PublishDeadLetter(message); err != nil {
+			message.Nack(false, true)
+			return
+		}
+		message.Ack(false)
+		return
+	}
+
+	if err := processJobSafely(job, envOr("WORKER_STORAGE_DIR", "uploads"), envOr("WORKER_OUTPUT_DIR", "outputs")); err != nil {
+		attempt := retryAttempt(message)
+		if attempt < 2 {
+			if retryErr := queue.PublishRetry(message, attempt+1); retryErr != nil {
+				logger.Log("job_retry_error", job.ID, retryErr.Error())
+				message.Nack(false, true)
+				return
+			}
+			logger.Log("job_retry_scheduled", job.ID, err.Error())
+			message.Ack(false)
+			return
+		}
+		job.Status = "Erro"
+		job.Error = err.Error()
+		logger.Log("job_failed", job.ID, err.Error())
+		if updateErr := repository.UpdateStatus(job.ID, job.Status, job.Error); updateErr != nil {
+			logger.Log("job_database_error", job.ID, updateErr.Error())
+		}
+		if notifyErr := notifier.NotifyProcessingError(notificationRecipient(job), job, err); notifyErr != nil {
+			logger.Log("job_notification_error", job.ID, notifyErr.Error())
+		}
+		if deadLetterErr := queue.PublishDeadLetter(message); deadLetterErr != nil {
+			logger.Log("job_dead_letter_error", job.ID, deadLetterErr.Error())
+			message.Nack(false, true)
+			return
+		}
+		message.Ack(false)
+		return
+	}
+
+	job.Status = "Concluido"
+	if err := repository.UpdateStatus(job.ID, job.Status, ""); err != nil {
+		logger.Log("job_database_error", job.ID, err.Error())
+		message.Nack(false, true)
+		return
+	}
+	logger.Log("job_completed", job.ID, "video processing completed")
+	message.Ack(false)
+}
+
+func retryAttempt(message amqp091.Delivery) int {
+	value, ok := message.Headers["x-retry-attempt"]
+	if !ok {
+		return 0
+	}
+	switch attempt := value.(type) {
+	case int:
+		return attempt
+	case int32:
+		return int(attempt)
+	case int64:
+		return int(attempt)
+	default:
+		return 0
+	}
+}
+
+func workerConcurrency() int {
+	cpuLimit := envInt("WORKER_CPU_LIMIT", runtime.NumCPU())
+	if cpuLimit > runtime.NumCPU() {
+		cpuLimit = runtime.NumCPU()
+	}
+	runtime.GOMAXPROCS(cpuLimit)
+	concurrency := envInt("WORKER_CONCURRENCY", cpuLimit)
+	if concurrency > cpuLimit {
+		concurrency = cpuLimit
+	}
+	if memoryLimitMB := envInt("WORKER_MAX_MEMORY_MB", 0); memoryLimitMB > 0 {
+		debug.SetMemoryLimit(int64(memoryLimitMB) * 1024 * 1024)
+		perJobMB := envInt("WORKER_MEMORY_PER_JOB_MB", 512)
+		memoryConcurrency := memoryLimitMB / perJobMB
+		if memoryConcurrency < 1 {
+			memoryConcurrency = 1
+		}
+		if concurrency > memoryConcurrency {
+			concurrency = memoryConcurrency
+		}
+	}
+	return concurrency
 }
 
 func processJobSafely(job VideoJob, storageDir, outputDir string) (processingError error) {

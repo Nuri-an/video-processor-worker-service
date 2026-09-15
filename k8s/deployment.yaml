@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video-processor-worker
+  namespace: video-processor
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: video-processor-worker
+  template:
+    metadata:
+      labels:
+        app: video-processor-worker
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: video-processor-worker:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: WORKER_STORAGE_DIR
+              value: /data/uploads
+            - name: WORKER_OUTPUT_DIR
+              value: /data/outputs
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              value: video_processor
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: video-processor-secrets
+                  key: postgres-password
+            - name: POSTGRES_DB
+              value: video_processor
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: RABBITMQ_PORT
+              value: "5672"
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: video-processor-secrets
+                  key: rabbitmq-user
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: video-processor-secrets
+                  key: rabbitmq-password
+            - name: RABBITMQ_QUEUE
+              value: video_jobs
+            - name: RABBITMQ_DLX
+              value: video_jobs.dlx
+            - name: WORKER_CONCURRENCY
+              value: "2"
+            - name: WORKER_CPU_LIMIT
+              value: "2"
+            - name: WORKER_MAX_MEMORY_MB
+              value: "1024"
+            - name: WORKER_MEMORY_PER_JOB_MB
+              value: "512"
+            - name: WORKER_PREFETCH
+              value: "2"
+            - name: WORKER_MAX_ATTEMPTS
+              value: "3"
+            - name: WORKER_RETRY_BASE_DELAY
+              value: 5s
+            - name: MONGO_URI
+              value: mongodb://mongo:27017
+            - name: MONGO_DATABASE
+              value: video_processor_logs
+            - name: MONGO_COLLECTION
+              value: application_logs
+            - name: SMTP_HOST
+              value: mailpit
+            - name: SMTP_PORT
+              value: "1025"
+            - name: SMTP_FROM
+              value: noreply@example.com
+          volumeMounts:
+            - name: shared-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+      volumes:
+        - name: shared-data
+          persistentVolumeClaim:
+            claimName: video-processor-data
