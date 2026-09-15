@@ -61,7 +61,7 @@ func (q *RabbitConsumer) Consume() (<-chan amqp091.Delivery, error) {
 }
 
 func (q *RabbitConsumer) declareTopology() error {
-	if _, err := q.channel.ExchangeDeclare(q.config.DLX, "direct", true, false, false, false, nil); err != nil {
+	if err := q.channel.ExchangeDeclare(q.config.DLX, "direct", true, false, false, false, nil); err != nil {
 		return err
 	}
 	deadQueue := q.config.Queue + ".dead"

@@ -69,57 +69,71 @@ func main() {
 	workers.Wait()
 }
 
-func handleMessage(message amqp091.Delivery, repository *PostgresJobRepository, logger Logger, notifier SMTPNotifier, queue *RabbitConsumer) {
-		var job VideoJob
-		if err := json.Unmarshal(message.Body, &job); err != nil {
-			logger.Log("job_invalid", "", err.Error())
-			if err := queue.PublishDeadLetter(message); err != nil {
-				message.Nack(false, true)
-				return
-			}
-			message.Ack(false)
-			return
-		}
+type jobStatusRepository interface {
+	UpdateStatus(id, status, errorMessage string) error
+}
 
-		if err := processJobSafely(job, envOr("WORKER_STORAGE_DIR", "uploads"), envOr("WORKER_OUTPUT_DIR", "outputs")); err != nil {
-			attempt := retryAttempt(message)
-			if attempt < queue.config.MaxAttempts-1 {
-				if retryErr := queue.PublishRetry(message, attempt+1); retryErr != nil {
-					logger.Log("job_retry_error", job.ID, retryErr.Error())
-					message.Nack(false, true)
-					return
-				}
-				logger.Log("job_retry_scheduled", job.ID, err.Error())
-				message.Ack(false)
-				return
-			}
-			job.Status = "Erro"
-			job.Error = err.Error()
-			logger.Log("job_failed", job.ID, err.Error())
-			if updateErr := repository.UpdateStatus(job.ID, job.Status, job.Error); updateErr != nil {
-				logger.Log("job_database_error", job.ID, updateErr.Error())
-			}
-			if notifyErr := notifier.NotifyProcessingError(notificationRecipient(job), job, err); notifyErr != nil {
-				logger.Log("job_notification_error", job.ID, notifyErr.Error())
-			}
-			if deadLetterErr := queue.PublishDeadLetter(message); deadLetterErr != nil {
-				logger.Log("job_dead_letter_error", job.ID, deadLetterErr.Error())
-				message.Nack(false, true)
-				return
-			}
-			message.Ack(false)
-			return
-		}
+type rabbitMessageQueue interface {
+	PublishRetry(amqp091.Delivery, int) error
+	PublishDeadLetter(amqp091.Delivery) error
+}
 
-		job.Status = "Concluido"
-		if err := repository.UpdateStatus(job.ID, job.Status, ""); err != nil {
-			logger.Log("job_database_error", job.ID, err.Error())
+type processingNotifier interface {
+	NotifyProcessingError(string, VideoJob, error) error
+}
+
+var processJobFunc = processJob
+
+func handleMessage(message amqp091.Delivery, repository jobStatusRepository, logger Logger, notifier processingNotifier, queue rabbitMessageQueue) {
+	var job VideoJob
+	if err := json.Unmarshal(message.Body, &job); err != nil {
+		logger.Log("job_invalid", "", err.Error())
+		if err := queue.PublishDeadLetter(message); err != nil {
 			message.Nack(false, true)
 			return
 		}
-		logger.Log("job_completed", job.ID, "video processing completed")
 		message.Ack(false)
+		return
 	}
+
+	if err := processJobSafely(job, envOr("WORKER_STORAGE_DIR", "uploads"), envOr("WORKER_OUTPUT_DIR", "outputs")); err != nil {
+		attempt := retryAttempt(message)
+		if attempt < 2 {
+			if retryErr := queue.PublishRetry(message, attempt+1); retryErr != nil {
+				logger.Log("job_retry_error", job.ID, retryErr.Error())
+				message.Nack(false, true)
+				return
+			}
+			logger.Log("job_retry_scheduled", job.ID, err.Error())
+			message.Ack(false)
+			return
+		}
+		job.Status = "Erro"
+		job.Error = err.Error()
+		logger.Log("job_failed", job.ID, err.Error())
+		if updateErr := repository.UpdateStatus(job.ID, job.Status, job.Error); updateErr != nil {
+			logger.Log("job_database_error", job.ID, updateErr.Error())
+		}
+		if notifyErr := notifier.NotifyProcessingError(notificationRecipient(job), job, err); notifyErr != nil {
+			logger.Log("job_notification_error", job.ID, notifyErr.Error())
+		}
+		if deadLetterErr := queue.PublishDeadLetter(message); deadLetterErr != nil {
+			logger.Log("job_dead_letter_error", job.ID, deadLetterErr.Error())
+			message.Nack(false, true)
+			return
+		}
+		message.Ack(false)
+		return
+	}
+
+	job.Status = "Concluido"
+	if err := repository.UpdateStatus(job.ID, job.Status, ""); err != nil {
+		logger.Log("job_database_error", job.ID, err.Error())
+		message.Nack(false, true)
+		return
+	}
+	logger.Log("job_completed", job.ID, "video processing completed")
+	message.Ack(false)
 }
 
 func retryAttempt(message amqp091.Delivery) int {
