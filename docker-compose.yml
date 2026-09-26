@@ -4,8 +4,11 @@ services:
     cpus: "2.0"
     mem_limit: 1g
     environment:
-      WORKER_STORAGE_DIR: /data/uploads
-      WORKER_OUTPUT_DIR: /data/outputs
+      S3_ENDPOINT: http://s3:8333
+      S3_BUCKET: video-processor
+      S3_ACCESS_KEY: minio
+      S3_SECRET_KEY: minio123
+      S3_REGION: us-east-1
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: video_processor
@@ -29,12 +32,9 @@ services:
       SMTP_HOST: mailpit
       SMTP_PORT: 1025
       SMTP_FROM: noreply@example.com
-    volumes:
-      - api-data:/data
     networks:
       - video-processor
     restart: unless-stopped
-
 volumes:
   api-data:
     external: true
