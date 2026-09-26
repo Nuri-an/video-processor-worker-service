@@ -53,8 +53,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	
+	storage, err := NewS3Storage()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := storage.Init(); err != nil {
+		log.Fatal(err)
+	}
 
 	log.Printf("Worker iniciado; aguardando tarefas no RabbitMQ (concorrencia=%d)", concurrency)
+	
 	semaphore := make(chan struct{}, concurrency)
 	var workers sync.WaitGroup
 	for message := range messages {
@@ -63,7 +73,7 @@ func main() {
 		go func(message amqp091.Delivery) {
 			defer workers.Done()
 			defer func() { <-semaphore }()
-			handleMessage(message, repository, logger, notifier, queue)
+			handleMessage(message, repository, logger, notifier, queue, storage)
 		}(message)
 	}
 	workers.Wait()
@@ -84,7 +94,14 @@ type processingNotifier interface {
 
 var processJobFunc = processJob
 
-func handleMessage(message amqp091.Delivery, repository jobStatusRepository, logger Logger, notifier processingNotifier, queue rabbitMessageQueue) {
+func handleMessage(
+	message amqp091.Delivery,
+	repository jobStatusRepository,
+	logger Logger,
+	notifier processingNotifier,
+	queue rabbitMessageQueue,
+	storage Storage,
+) {
 	var job VideoJob
 	if err := json.Unmarshal(message.Body, &job); err != nil {
 		logger.Log("job_invalid", "", err.Error())
@@ -96,7 +113,7 @@ func handleMessage(message amqp091.Delivery, repository jobStatusRepository, log
 		return
 	}
 
-	if err := processJobSafely(job, envOr("WORKER_STORAGE_DIR", "uploads"), envOr("WORKER_OUTPUT_DIR", "outputs")); err != nil {
+	if err := processJobSafely(job, storage); err != nil {
 		attempt := retryAttempt(message)
 		if attempt < 2 {
 			if retryErr := queue.PublishRetry(message, attempt+1); retryErr != nil {
@@ -177,13 +194,14 @@ func workerConcurrency() int {
 	return concurrency
 }
 
-func processJobSafely(job VideoJob, storageDir, outputDir string) (processingError error) {
+func processJobSafely(job VideoJob, storage Storage) (processingError error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			processingError = fmt.Errorf("processamento interrompido: %v", recovered)
 		}
 	}()
-	return processJob(job, storageDir, outputDir)
+
+	return processJob(job, storage)
 }
 
 func notificationRecipient(job VideoJob) string {
@@ -196,27 +214,85 @@ func notificationRecipient(job VideoJob) string {
 	return strings.TrimSpace(envOr("SMTP_TO", ""))
 }
 
-func processJob(job VideoJob, storageDir, outputDir string) error {
-	videoPath := filepath.Join(storageDir, filepath.Base(job.ObjectKey))
+func processJob(job VideoJob, storage Storage) error {
 	tempDir := filepath.Join("temp", job.ID)
+
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return err
-	}
+
 	defer os.RemoveAll(tempDir)
 
+	// Baixa o vídeo do Object Storage
+	videoReader, err := storage.Get(job.ObjectKey)
+	if err != nil {
+		return fmt.Errorf("erro ao baixar vídeo do storage: %w", err)
+	}
+	defer videoReader.Close()
+
+	videoPath := filepath.Join(tempDir, filepath.Base(job.ObjectKey))
+
+	videoFile, err := os.Create(videoPath)
+	if err != nil {
+		return fmt.Errorf("erro ao criar arquivo temporário: %w", err)
+	}
+
+	if _, err := io.Copy(videoFile, videoReader); err != nil {
+		videoFile.Close()
+		return fmt.Errorf("erro ao salvar vídeo temporário: %w", err)
+	}
+
+	if err := videoFile.Close(); err != nil {
+		return err
+	}
+
+	// Extrai os frames
 	frames := filepath.Join(tempDir, "frame_%04d.png")
-	output, err := exec.Command("ffmpeg", "-i", videoPath, "-vf", "fps=1", "-y", frames).CombinedOutput()
+
+	output, err := exec.Command(
+		"ffmpeg",
+		"-i",
+		videoPath,
+		"-vf",
+		"fps=1",
+		"-y",
+		frames,
+	).CombinedOutput()
+
 	if err != nil {
 		return fmt.Errorf("ffmpeg: %w: %s", err, output)
 	}
+
 	files, err := filepath.Glob(filepath.Join(tempDir, "*.png"))
-	if err != nil || len(files) == 0 {
-		return fmt.Errorf("nenhum frame extraido")
+	if err != nil {
+		return err
 	}
-	return createZip(files, filepath.Join(outputDir, "frames_"+job.ID+".zip"))
+
+	if len(files) == 0 {
+		return fmt.Errorf("nenhum frame extraído")
+	}
+
+	// Cria ZIP temporário
+	zipPath := filepath.Join(tempDir, "frames_"+job.ID+".zip")
+
+	if err := createZip(files, zipPath); err != nil {
+		return fmt.Errorf("erro ao criar ZIP: %w", err)
+	}
+
+	// Faz upload do ZIP para o Object Storage
+	zipFile, err := os.Open(zipPath)
+	if err != nil {
+		return fmt.Errorf("erro ao abrir ZIP: %w", err)
+	}
+	defer zipFile.Close()
+
+	outputKey := "outputs/frames_" + job.ID + ".zip"
+
+	if err := storage.Put(outputKey, zipFile); err != nil {
+		return fmt.Errorf("erro ao enviar ZIP para o storage: %w", err)
+	}
+
+	return nil
 }
 
 func createZip(files []string, target string) error {
