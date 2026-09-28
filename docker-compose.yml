@@ -1,0 +1,46 @@
+services:
+  worker:
+    build: .
+    cpus: "2.0"
+    mem_limit: 1g
+    environment:
+      S3_ENDPOINT: http://s3:8333
+      S3_BUCKET: video-processor
+      S3_ACCESS_KEY: minio
+      S3_SECRET_KEY: minio123
+      S3_REGION: us-east-1
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: video_processor
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+      POSTGRES_DB: video_processor
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: "${RABBITMQ_USER:?RABBITMQ_USER is required}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}"
+      RABBITMQ_QUEUE: video_jobs
+      RABBITMQ_DLX: video_jobs.dlx
+      RABBITMQ_CONFIRM_TIMEOUT: 5s
+      WORKER_CONCURRENCY: "2"
+      WORKER_CPU_LIMIT: "2"
+      WORKER_MAX_MEMORY_MB: "1024"
+      WORKER_MEMORY_PER_JOB_MB: "512"
+      WORKER_PREFETCH: "2"
+      WORKER_MAX_ATTEMPTS: "3"
+      WORKER_RETRY_BASE_DELAY: 5s
+      MONGO_URI: mongodb://mongo:27017
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_FROM: noreply@example.com
+    networks:
+      - video-processor
+    restart: unless-stopped
+volumes:
+  api-data:
+    external: true
+    name: video-processor-data
+
+networks:
+  video-processor:
+    external: true
+    name: video-processor
